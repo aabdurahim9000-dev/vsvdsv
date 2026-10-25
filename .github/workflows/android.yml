@@ -11,6 +11,12 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [standard, background]
+    env:
+      BG: ${{ matrix.variant == 'background' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,13 +29,19 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Separate app id for background variant
+        if: matrix.variant == 'background'
+        run: |
+          sed -i 's/"com.jarvis.assistant"/"com.jarvis.assistant.bg"/; s/"appName": "Джарвис"/"appName": "Джарвис Фон"/' capacitor.config.json
+          cat capacitor.config.json
+
       - name: Install dependencies
         run: npm install
 
       - name: Add Android platform
         run: npx cap add android
 
-      - name: Permissions and icon
+      - name: Permissions, icon, background service
         run: |
           pip install pillow || true
           python3 scripts/patch_android.py
@@ -43,16 +55,21 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
+      - name: Name APK
+        run: |
+          if [ "${{ matrix.variant }}" = "background" ]; then N=Jarvis-Background.apk; else N=Jarvis.apk; fi
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$N"
+          echo "APK_NAME=$N" >> "$GITHUB_ENV"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: jarvis-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: jarvis-apk-${{ matrix.variant }}
+          path: ${{ env.APK_NAME }}
 
       - name: Publish release with APK
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk Jarvis.apk
-          gh release create "apk-${{ github.run_number }}" Jarvis.apk --title "Джарвис APK #${{ github.run_number }}" --notes "Скачай Jarvis.apk на телефон и установи."
+          gh release create "apk-${{ matrix.variant }}-${{ github.run_number }}" "$APK_NAME" --title "Джарвис ${{ matrix.variant }} #${{ github.run_number }}" --notes "Скачай $APK_NAME на телефон и установи."
